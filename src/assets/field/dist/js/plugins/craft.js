@@ -1,31 +1,5 @@
-(function (factory) {
-    if (typeof define === 'function' && define.amd) {
-        // AMD. Register as an anonymous module.
-        define(['jquery'], factory);
-    } else if (typeof module === 'object' && module.exports) {
-        // Node/CommonJS
-        module.exports = function (root, jQuery) {
-            if (jQuery === undefined) {
-                // require('jQuery') returns a factory that requires window to
-                // build a jQuery instance, we normalize how we use modules
-                // that require this pattern but the window provided is a noop
-                // if it's defined (how jquery works)
-                if (typeof window !== 'undefined') {
-                    jQuery = require('jquery');
-                }
-                else {
-                    jQuery = require('jquery')(root);
-                }
-            }
-            return factory(jQuery);
-        };
-    } else {
-        // Browser globals
-        factory(window.jQuery);
-    }
-}(function ($) {
-
-    $.extend($.FE.DEFAULTS, {
+(function (FroalaEditor) {
+  FroalaEditor.DEFAULTS = Object.assign(FroalaEditor.DEFAULTS, {
         // general
         craftElementSiteId: false,
         craftAssetElementType: false,
@@ -44,280 +18,288 @@
         // files
         craftFileCriteria: false,
         craftFileSources: [],
-        craftFileStorageKey: false
-    });
+        craftFileStorageKey: false,
 
-    $.FE.PLUGINS.craft = function (editor) {
+        linkInsertButtons: ['craftLinkEntry','craftLinkAsset']
+  });
 
-        function showEntrySelectModal() {
-            var disabledElementIds = [],
-                $popup = editor.popups.get('link.insert'),
-                selectedText = (editor.selection.text() || false);
+  // Define the plugin.
+  // The editor parameter is the current instance.
+  FroalaEditor.PLUGINS.craft = function (editor) {
+    function showEntrySelectModal() {
+        var disabledElementIds = [],
+            $popup = editor.popups.get('link.insert'),
+            selectedText = (editor.selection.text() || false);
 
-            // save selection before modal is shown
-            var $currentImage = editor.image.get();
-            if (!$currentImage) {
-                editor.selection.save();
+        console.log(selectedText);
+
+        // save selection before modal is shown
+        var $currentImage = editor.image.get();
+        if (!$currentImage) {
+            editor.selection.save();
+        }
+
+        // check the src url containing '#asset:{id}[:{transform}]'
+        var urlValue = $popup.find('input[name="href"]').val();
+        if (urlValue && urlValue.indexOf('#') !== -1) {
+
+            var hashValue = urlValue.substr(urlValue.indexOf('#'));
+                hashValue = decodeURIComponent(hashValue);
+
+            if (hashValue.indexOf(':') !== -1) {
+                disabledElementIds.push(hashValue.split(':')[1]);
             }
+        }
+
+        _elementModal(
+            editor.opts.craftLinkElementType,
+            editor.opts.craftLinkStorageKey,
+            editor.opts.craftLinkSources,
+            editor.opts.craftLinkCriteria,
+            {
+                transforms: editor.opts.craftImageTransforms
+            },
+            function (elements) {
+                if ($currentImage) {
+                    editor.image.edit($currentImage);
+                } else {
+                    editor.selection.restore();
+                }
+
+                // re-focus the popup
+                if (!editor.popups.isVisible('link.insert')) {
+                    editor.popups.show('link.insert');
+                }
+
+                // add-in element link details
+                if (elements.length) {
+                    var element = elements[0],
+                        url = element.url + '#' + editor.opts.craftLinkElementRefHandle + ':' + element.id,
+                        title = selectedText.length > 0 ? selectedText : element.label;
+
+                    $popup.find('input[name="href"]').val(url);
+                    $popup.find('input[name="text"]').val(title);
+                }
+            }
+        );
+    }
+
+    function showImageInsertModal() {
+        // save selection before modal is shown
+        editor.selection.save();
+
+        _elementModal(
+            editor.opts.craftAssetElementType,
+            editor.opts.craftImageStorageKey,
+            editor.opts.craftImageSources,
+            editor.opts.craftImageCriteria,
+            null,
+            function (assets, transform) {
+                if (assets.length) {
+                    for (var i = 0; i < assets.length; i++) {
+                        var asset = assets[i],
+                            url = asset.url + '#' + editor.opts.craftAssetElementRefHandle + ':' + asset.id;
+
+                        if (transform) {
+                            url += ':' + transform;
+                        }
+
+                        editor.image.insert(url, false);
+                    }
+
+                    return true;
+                }
+            }
+        );
+    }
+
+    function showImageReplaceModal() {
+        var disabledElementIds = [],
+            $currentImage = editor.image.get();
+
+        // check the src url containing '#asset:{id}[:{transform}]'
+        if ($currentImage.attr('src').indexOf('#') !== -1) {
+
+            var hashValue = $currentImage.attr('src').substr($currentImage.attr('src').indexOf('#'));
+                hashValue = decodeURIComponent(hashValue);
+
+            if (hashValue.indexOf(':') !== -1) {
+                disabledElementIds.push(hashValue.split(':')[1]);
+            }
+        }
+
+        _elementModal(
+            editor.opts.craftAssetElementType,
+            editor.opts.craftImageStorageKey,
+            editor.opts.craftImageSources,
+            editor.opts.craftImageCriteria,
+            {
+                disabledElementIds: disabledElementIds,
+                transforms: editor.opts.craftImageTransforms
+            },
+            function (assets, transform) {
+                if (assets.length) {
+                    for (var i = 0; i < assets.length; i++) {
+                        var asset = assets[i],
+                            url = asset.url + '#asset:' + asset.id;
+
+                        if (transform) {
+                            url += ':' + transform;
+                        }
+
+                        editor.image.insert(url, false, [], $currentImage);
+                    }
+
+                    return true;
+                }
+            }
+        );
+    }
+
+    function showFileInsertModal(viaPopup) {
+        var viaPopup = viaPopup || false,
+            disabledElementIds = [],
+            selectedText = (editor.selection.text() || false);
+
+        if (viaPopup) {
+            var $popup = editor.popups.get('link.insert');
 
             // check the src url containing '#asset:{id}[:{transform}]'
             var urlValue = $popup.find('input[name="href"]').val();
             if (urlValue && urlValue.indexOf('#') !== -1) {
 
                 var hashValue = urlValue.substr(urlValue.indexOf('#'));
-                    hashValue = decodeURIComponent(hashValue);
+                hashValue = decodeURIComponent(hashValue);
 
                 if (hashValue.indexOf(':') !== -1) {
                     disabledElementIds.push(hashValue.split(':')[1]);
                 }
             }
+        }
 
-            _elementModal(
-                editor.opts.craftLinkElementType,
-                editor.opts.craftLinkStorageKey,
-                editor.opts.craftLinkSources,
-                editor.opts.craftLinkCriteria,
-                {
-                    transforms: editor.opts.craftImageTransforms
-                },
-                function (elements) {
-                    if ($currentImage) {
-                        editor.image.edit($currentImage);
-                    } else {
-                        editor.selection.restore();
-                    }
+        // save selection before modal is shown
+        editor.selection.save();
 
-                    // re-focus the popup
-                    if (!editor.popups.isVisible('link.insert')) {
-                        editor.popups.show('link.insert');
-                    }
+        _elementModal(
+            editor.opts.craftAssetElementType,
+            editor.opts.craftFileStorageKey,
+            editor.opts.craftFileSources,
+            editor.opts.craftFileCriteria,
+            {
+                disabledElementIds: disabledElementIds
+            },
+            function (elements) {
 
-                    // add-in element link details
-                    if (elements.length) {
-                        var element = elements[0],
-                            url = element.url + '#' + editor.opts.craftLinkElementRefHandle + ':' + element.id,
-                            title = selectedText.length > 0 ? selectedText : element.label;
+                // re-focus the popup
+                if (viaPopup && !editor.popups.isVisible('link.insert')) {
+                    editor.popups.show('link.insert');
+                }
 
+                if (elements.length) {
+                    var element = elements[0],
+                        url = element.url + '#' + editor.opts.craftAssetElementRefHandle + ':' + element.id,
+                        title = selectedText.length > 0 ? selectedText : element.label;
+
+                    if (viaPopup) {
+                        // no title replace at update
                         $popup.find('input[name="href"]').val(url);
-                        $popup.find('input[name="text"]').val(title);
+                    } else {
+                        editor.link.insert(url, title);
                     }
-                }
-            );
-        }
 
-        function showImageInsertModal() {
-            // save selection before modal is shown
-            editor.selection.save();
-
-            _elementModal(
-                editor.opts.craftAssetElementType,
-                editor.opts.craftImageStorageKey,
-                editor.opts.craftImageSources,
-                editor.opts.craftImageCriteria,
-                null,
-                function (assets, transform) {
-                    if (assets.length) {
-                        for (var i = 0; i < assets.length; i++) {
-                            var asset = assets[i],
-                                url = asset.url + '#' + editor.opts.craftAssetElementRefHandle + ':' + asset.id;
-
-                            if (transform) {
-                                url += ':' + transform;
-                            }
-
-                            editor.image.insert(url, false);
-                        }
-
-                        return true;
-                    }
-                }
-            );
-        }
-
-        function showImageReplaceModal() {
-            var disabledElementIds = [],
-                $currentImage = editor.image.get();
-
-            // check the src url containing '#asset:{id}[:{transform}]'
-            if ($currentImage.attr('src').indexOf('#') !== -1) {
-
-                var hashValue = $currentImage.attr('src').substr($currentImage.attr('src').indexOf('#'));
-                    hashValue = decodeURIComponent(hashValue);
-
-                if (hashValue.indexOf(':') !== -1) {
-                    disabledElementIds.push(hashValue.split(':')[1]);
+                    return true;
                 }
             }
+        );
+    }
 
-            _elementModal(
-                editor.opts.craftAssetElementType,
-                editor.opts.craftImageStorageKey,
-                editor.opts.craftImageSources,
-                editor.opts.craftImageCriteria,
-                {
-                    disabledElementIds: disabledElementIds,
-                    transforms: editor.opts.craftImageTransforms
-                },
-                function (assets, transform) {
-                    if (assets.length) {
-                        for (var i = 0; i < assets.length; i++) {
-                            var asset = assets[i],
-                                url = asset.url + '#asset:' + asset.id;
+    function _elementModal(type, storageKey, sources, criteria, addOpts, callback) {
 
-                            if (transform) {
-                                url += ':' + transform;
-                            }
+        var modalOpts = {
+            storageKey: (storageKey || 'Froala.Craft.Modal.' + type),
+            sources: sources,
+            criteria: criteria,
+            onSelect: $.proxy(callback, editor),
+            closeOtherModals: false
+        };
 
-                            editor.image.insert(url, false, [], $currentImage);
-                        }
-
-                        return true;
-                    }
-                }
-            );
+        if (typeof addOpts !== 'undefined') {
+            modalOpts = $.extend(modalOpts, addOpts);
         }
 
-        function showFileInsertModal(viaPopup) {
-            var viaPopup = viaPopup || false,
-                disabledElementIds = [],
-                selectedText = (editor.selection.text() || false);
+        var modal = Craft.createElementSelectorModal(type, modalOpts);
+    }
 
-            if (viaPopup) {
-                var $popup = editor.popups.get('link.insert');
-
-                // check the src url containing '#asset:{id}[:{transform}]'
-                var urlValue = $popup.find('input[name="href"]').val();
-                if (urlValue && urlValue.indexOf('#') !== -1) {
-
-                    var hashValue = urlValue.substr(urlValue.indexOf('#'));
-                    hashValue = decodeURIComponent(hashValue);
-
-                    if (hashValue.indexOf(':') !== -1) {
-                        disabledElementIds.push(hashValue.split(':')[1]);
-                    }
-                }
-            }
-
-            // save selection before modal is shown
-            editor.selection.save();
-
-            _elementModal(
-                editor.opts.craftAssetElementType,
-                editor.opts.craftFileStorageKey,
-                editor.opts.craftFileSources,
-                editor.opts.craftFileCriteria,
-                {
-                    disabledElementIds: disabledElementIds
-                },
-                function (elements) {
-
-                    // re-focus the popup
-                    if (viaPopup && !editor.popups.isVisible('link.insert')) {
-                        editor.popups.show('link.insert');
-                    }
-
-                    if (elements.length) {
-                        var element = elements[0],
-                            url = element.url + '#' + editor.opts.craftAssetElementRefHandle + ':' + element.id,
-                            title = selectedText.length > 0 ? selectedText : element.label;
-
-                        if (viaPopup) {
-                            // no title replace at update
-                            $popup.find('input[name="href"]').val(url);
-                        } else {
-                            editor.link.insert(url, title);
-                        }
-
-                        return true;
-                    }
-                }
-            );
-        }
-
-        function _elementModal(type, storageKey, sources, criteria, addOpts, callback) {
-
-            var modalOpts = {
-                storageKey: (storageKey || 'Froala.Craft.Modal.' + type),
-                sources: sources,
-                criteria: criteria,
-                onSelect: $.proxy(callback, editor),
-                closeOtherModals: false
-            };
-
-            if (typeof addOpts !== 'undefined') {
-                modalOpts = $.extend(modalOpts, addOpts);
-            }
-
-            var modal = Craft.createElementSelectorModal(type, modalOpts);
-        }
-
-        return {
-            showEntrySelectModal: showEntrySelectModal,
-            showImageInsertModal: showImageInsertModal,
-            showImageReplaceModal: showImageReplaceModal,
-            showFileInsertModal: showFileInsertModal
-        }
-    };
-
-    /*
+    // The start point for your plugin.
+    function _init () {
+        /*
         LINK REPLACEMENTS & ADDITIONS
-     */
+        */
 
-    $.FE.DefineIcon('craftLinkEntry', { NAME: 'newspaper-o' });
-    $.FE.RegisterCommand('craftLinkEntry', {
-        title: 'Link to Craft Entry',
-        undo: false,
-        focus: true,
-        refreshOnCallback: false,
-        popup: true,
-        callback: function () {
-            this.craft.showEntrySelectModal();
-        }
-    });
+        FroalaEditor.DefineIcon('craftLinkEntry', { NAME: 'newspaper-o', template: 'font_awesome' });
+        FroalaEditor.RegisterCommand('craftLinkEntry', {
+            title: 'Link to Craft Entry',
+            undo: false,
+            focus: true,
+            refreshOnCallback: false,
+            popup: true,
+            callback: function () {
+                editor.craft.showEntrySelectModal();
+            }
+        });
 
-    $.FE.DefineIcon('craftLinkAsset', { NAME: 'file-o' });
-    $.FE.RegisterCommand('craftLinkAsset', {
-        title: 'Link to Craft Asset',
-        focus: true,
-        refreshOnCallback: true,
-        callback: function () {
-            this.craft.showFileInsertModal(true);
-        }
-    });
+        FroalaEditor.DefineIcon('craftLinkAsset', { NAME: 'file-o', template: 'font_awesome' });
+        FroalaEditor.RegisterCommand('craftLinkAsset', {
+            title: 'Link to Craft Asset',
+            focus: true,
+            refreshOnCallback: true,
+            callback: function () {
+                editor.craft.showFileInsertModal(true);
+            }
+        });
 
-    $.extend($.FE.DEFAULTS, {
-        linkInsertButtons: ['craftLinkEntry','craftLinkAsset']
-    });
+        /*
+            IMAGE REPLACEMENTS & ADDITIONS
+        */
 
-    /*
-        IMAGE REPLACEMENTS & ADDITIONS
-     */
+        FroalaEditor.RegisterCommand('insertImage', Object.assign(FroalaEditor.COMMANDS['insertImage'], {
+            callback: function (cmd, val) {
+                editor.craft.showImageInsertModal();
+            }
+        }));
 
-    $.FE.RegisterCommand('insertImage', $.extend($.FE.COMMANDS['insertImage'], {
-        callback: function (cmd, val) {
-            this.craft.showImageInsertModal();
-        }
-    }));
+        FroalaEditor.RegisterCommand('imageReplace', Object.assign(FroalaEditor.COMMANDS['imageReplace'], {
+            callback: function (cmd, val) {
+                editor.craft.showImageReplaceModal();
+            }
+        }));
 
-    $.FE.RegisterCommand('imageReplace', $.extend($.FE.COMMANDS['imageReplace'], {
-        callback: function (cmd, val) {
-            this.craft.showImageReplaceModal();
-        }
-    }));
+        /*
+            FILE REPLACEMENTS & ADDITIONS
+        */
 
-    /*
-        FILE REPLACEMENTS & ADDITIONS
-     */
+        FroalaEditor.RegisterCommand('insertFile', Object.assign(FroalaEditor.COMMANDS['insertFile'], {
+            callback: function (cmd, val) {
+                editor.craft.showFileInsertModal();
+            }
+        }));
 
-    $.FE.RegisterCommand('insertFile', $.extend($.FE.COMMANDS['insertFile'], {
-        callback: function (cmd, val) {
-            this.craft.showFileInsertModal();
-        }
-    }));
+        /*
+            SHORTCUT REPLACEMENT FOR CRAFT'S SAVE ACTION
+        */
 
-    /*
-        SHORTCUT REPLACEMENT FOR CRAFT'S SAVE ACTION
-     */
+        FroalaEditor.RegisterShortcut(FroalaEditor.KEYCODE.S, null, null, null, false, false);
+    }
 
-    $.FroalaEditor.RegisterShortcut($.FE.KEYCODE.S, null, null, null, false, false);
-}));
+    // Expose public methods. If _init is not public then the plugin won't be initialized.
+    // Public method can be accessed through the editor API:
+    // editor.myPlugin.publicMethod();
+     return {
+        _init,
+        showEntrySelectModal: showEntrySelectModal,
+        showImageInsertModal: showImageInsertModal,
+        showImageReplaceModal: showImageReplaceModal,
+        showFileInsertModal: showFileInsertModal
+    }
+  }
+})(FroalaEditor);
